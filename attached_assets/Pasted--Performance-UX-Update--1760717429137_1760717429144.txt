@@ -1,0 +1,1490 @@
+## تحسينات واجهة الدردشة - Performance & UX Update
+
+سأقدم تحسينات شاملة للواجهة مع التركيز على الأداء، تجربة المستخدم، ودعم RTL المتقدم.
+
+### 📋 ملخص التحسينات
+
+```diff
++ تحسين الأداء: React.memo, useMemo, lazy loading متقدم
++ مؤشرات تحميل محسّنة: skeleton loaders, progress bars
++ RTL محسّن: عكس اتجاه الأيقونات التفاعلية تلقائيًا
++ أيقونات مخصصة مع SVG components و fallback
++ Quick AI Actions مع اختصارات لوحة المفاتيح
++ معالجة أخطاء شاملة مع retry logic
++ Virtual scrolling للرسائل الكثيرة
++ تحسينات الـ Accessibility (ARIA labels)
+```
+
+### 1. Context المحسّن للأداء
+
+#### `app/chat/context/ChatContext.tsx`
+
+```tsx
+'use client'
+
+import React, { createContext, useContext, useReducer, useCallback, useMemo } from 'react'
+
+// Types
+interface ChatState {
+  sessions: ChatSession[]
+  activeSessionId: string | null
+  messages: Map<string, Message[]>
+  isLoading: boolean
+  error: ErrorState | null
+  theme: 'light' | 'dark'
+  direction: 'rtl' | 'ltr'
+  quickActions: QuickAction[]
+  uploadProgress: Map<string, number>
+}
+
+interface ErrorState {
+  code: string
+  message: string
+  retry?: () => void
+}
+
+interface QuickAction {
+  id: string
+  label: string
+  icon: React.ReactNode
+  shortcut?: string
+  template: string
+}
+
+// Actions
+type ChatAction =
+  | { type: 'SET_SESSIONS'; payload: ChatSession[] }
+  | { type: 'ADD_MESSAGE'; sessionId: string; message: Message }
+  | { type: 'SET_LOADING'; payload: boolean }
+  | { type: 'SET_ERROR'; payload: ErrorState | null }
+  | { type: 'SET_THEME'; payload: 'light' | 'dark' }
+  | { type: 'SET_DIRECTION'; payload: 'rtl' | 'ltr' }
+  | { type: 'SET_UPLOAD_PROGRESS'; fileId: string; progress: number }
+  | { type: 'CLEAR_UPLOAD_PROGRESS'; fileId: string }
+
+// Reducer with performance optimization
+const chatReducer = (state: ChatState, action: ChatAction): ChatState => {
+  switch (action.type) {
+    case 'ADD_MESSAGE': {
+      const messages = new Map(state.messages)
+      const sessionMessages = messages.get(action.sessionId) || []
+      messages.set(action.sessionId, [...sessionMessages, action.message])
+      return { ...state, messages }
+    }
+    
+    case 'SET_UPLOAD_PROGRESS': {
+      const uploadProgress = new Map(state.uploadProgress)
+      uploadProgress.set(action.fileId, action.progress)
+      return { ...state, uploadProgress }
+    }
+    
+    // ... باقي الحالات
+    default:
+      return state
+  }
+}
+
+// Initial state
+const initialState: ChatState = {
+  sessions: [],
+  activeSessionId: null,
+  messages: new Map(),
+  isLoading: false,
+  error: null,
+  theme: 'light',
+  direction: 'rtl',
+  quickActions: [
+    {
+      id: 'summarize',
+      label: 'تلخيص',
+      icon: '📝',
+      shortcut: 'Ctrl+Shift+S',
+      template: '/summarize '
+    },
+    {
+      id: 'translate',
+      label: 'ترجمة',
+      icon: '🌐',
+      shortcut: 'Ctrl+Shift+T',
+      template: '/translate '
+    },
+    {
+      id: 'explain',
+      label: 'شرح',
+      icon: '💡',
+      shortcut: 'Ctrl+Shift+E',
+      template: '/explain '
+    },
+    {
+      id: 'improve',
+      label: 'تحسين',
+      icon: '✨',
+      shortcut: 'Ctrl+Shift+I',
+      template: '/improve '
+    }
+  ],
+  uploadProgress: new Map()
+}
+
+// Context
+const ChatContext = createContext<{
+  state: ChatState
+  dispatch: React.Dispatch<ChatAction>
+  actions: ChatActions
+} | null>(null)
+
+// Custom hook with memoization
+export function useChatContext() {
+  const context = useContext(ChatContext)
+  if (!context) {
+    throw new Error('useChatContext must be used within ChatProvider')
+  }
+  return context
+}
+
+// Provider with performance optimizations
+export function ChatProvider({ children }: { children: React.ReactNode }) {
+  const [state, dispatch] = useReducer(chatReducer, initialState)
+
+  // Memoized actions to prevent unnecessary re-renders
+  const actions = useMemo<ChatActions>(() => ({
+    sendMessage: async (sessionId: string, content: MessageContent) => {
+      const userMessage: Message = {
+        id: `msg_${Date.now()}`,
+        role: 'user',
+        content,
+        timestamp: new Date(),
+        status: 'sending'
+      }
+      
+      dispatch({ type: 'ADD_MESSAGE', sessionId, message: userMessage })
+      dispatch({ type: 'SET_LOADING', payload: true })
+
+      try {
+        // محاكاة API call
+        const response = await simulateAIResponse(content)
+        
+        const aiMessage: Message = {
+          id: `msg_${Date.now()}_ai`,
+          role: 'assistant',
+          content: response,
+          timestamp: new Date(),
+          status: 'sent'
+        }
+        
+        dispatch({ type: 'ADD_MESSAGE', sessionId, message: aiMessage })
+      } catch (error) {
+        dispatch({
+          type: 'SET_ERROR',
+          payload: {
+            code: 'AI_ERROR',
+            message: 'حدث خطأ في الاستجابة',
+            retry: () => actions.sendMessage(sessionId, content)
+          }
+        })
+      } finally {
+        dispatch({ type: 'SET_LOADING', payload: false })
+      }
+    },
+
+    uploadFile: async (file: File, onProgress?: (progress: number) => void) => {
+      const fileId = `file_${Date.now()}`
+      
+      // محاكاة رفع الملف مع progress
+      for (let progress = 0; progress <= 100; progress += 10) {
+        await new Promise(resolve => setTimeout(resolve, 200))
+        dispatch({ type: 'SET_UPLOAD_PROGRESS', fileId, progress })
+        onProgress?.(progress)
+      }
+      
+      dispatch({ type: 'CLEAR_UPLOAD_PROGRESS', fileId })
+      return fileId
+    },
+
+    toggleTheme: () => {
+      const newTheme = state.theme === 'light' ? 'dark' : 'light'
+      dispatch({ type: 'SET_THEME', payload: newTheme })
+      document.documentElement.setAttribute('data-theme', newTheme)
+      localStorage.setItem('theme', newTheme)
+    },
+
+    toggleDirection: () => {
+      const newDirection = state.direction === 'rtl' ? 'ltr' : 'rtl'
+      dispatch({ type: 'SET_DIRECTION', payload: newDirection })
+      document.documentElement.setAttribute('dir', newDirection)
+      localStorage.setItem('direction', newDirection)
+    }
+  }), [state.theme, state.direction])
+
+  // Memoized context value
+  const contextValue = useMemo(
+    () => ({ state, dispatch, actions }),
+    [state, actions]
+  )
+
+  return (
+    <ChatContext.Provider value={contextValue}>
+      {children}
+    </ChatContext.Provider>
+  )
+}
+
+// محاكاة استجابة AI
+async function simulateAIResponse(content: MessageContent): Promise<MessageContent> {
+  await new Promise(resolve => setTimeout(resolve, 1500))
+  
+  const responses = [
+    'مرحبًا! سأساعدك في هذا الموضوع...',
+    'فكرة ممتازة! دعني أشرح لك التفاصيل...',
+    'بناءً على سؤالك، إليك الحل المقترح...'
+  ]
+  
+  return {
+    text: responses[Math.floor(Math.random() * responses.length)],
+    markdown: true
+  }
+}
+
+// Types export
+export type { ChatState, ChatAction, Message, MessageContent, ChatSession, QuickAction }
+
+interface ChatActions {
+  sendMessage: (sessionId: string, content: MessageContent) => Promise<void>
+  uploadFile: (file: File, onProgress?: (progress: number) => void) => Promise<string>
+  toggleTheme: () => void
+  toggleDirection: () => void
+}
+```
+
+### 2. مكون الرسائل المحسّن مع Virtual Scrolling
+
+#### `app/chat/components/VirtualMessageList.tsx`
+
+```tsx
+'use client'
+
+import React, { useRef, useEffect, useMemo, useCallback } from 'react'
+import { VariableSizeList as List } from 'react-window'
+import AutoSizer from 'react-virtualized-auto-sizer'
+import { motion, AnimatePresence } from 'framer-motion'
+import MessageBubble from './MessageBubble'
+import LoadingIndicator from './LoadingIndicator'
+import { useChatContext } from '../context/ChatContext'
+import styles from './VirtualMessageList.module.css'
+
+interface VirtualMessageListProps {
+  sessionId: string
+  className?: string
+}
+
+// مكون محسّن للأداء مع memo
+const VirtualMessageList = React.memo<VirtualMessageListProps>(({ 
+  sessionId, 
+  className 
+}) => {
+  const { state } = useChatContext()
+  const listRef = useRef<List>(null)
+  const rowHeights = useRef<Map<number, number>>(new Map())
+  
+  const messages = state.messages.get(sessionId) || []
+
+  // حساب ارتفاع الرسائل ديناميكيًا
+  const getItemSize = useCallback((index: number) => {
+    return rowHeights.current.get(index) || 150
+  }, [])
+
+  const setItemSize = useCallback((index: number, size: number) => {
+    if (rowHeights.current.get(index) !== size) {
+      rowHeights.current.set(index, size)
+      listRef.current?.resetAfterIndex(index)
+    }
+  }, [])
+
+  // التمرير التلقائي للأسفل عند وصول رسائل جديدة
+  useEffect(() => {
+    if (messages.length > 0 && listRef.current) {
+      listRef.current.scrollToItem(messages.length - 1, 'end')
+    }
+  }, [messages.length])
+
+  // مكون الصف المحسّن
+  const Row = useCallback(({ index, style }: { index: number; style: React.CSSProperties }) => {
+    const message = messages[index]
+    const isLastMessage = index === messages.length - 1
+
+    return (
+      <div style={style}>
+        <div 
+          ref={(el) => {
+            if (el) {
+              const height = el.getBoundingClientRect().height
+              setItemSize(index, height)
+            }
+          }}
+        >
+          <MessageBubble
+            message={message}
+            isLastMessage={isLastMessage}
+            sessionId={sessionId}
+          />
+        </div>
+      </div>
+    )
+  }, [messages, sessionId, setItemSize])
+
+  // حساب المجموع الكلي للارتفاعات
+  const itemData = useMemo(
+    () => ({ messages, sessionId }),
+    [messages, sessionId]
+  )
+
+  return (
+    <div className={`${styles.container} ${className || ''}`}>
+      <AutoSizer>
+        {({ height, width }) => (
+          <>
+            <List
+              ref={listRef}
+              height={height}
+              width={width}
+              itemCount={messages.length}
+              itemSize={getItemSize}
+              itemData={itemData}
+              overscanCount={3}
+              className={styles.virtualList}
+            >
+              {Row}
+            </List>
+
+            {/* مؤشر التحميل */}
+            <AnimatePresence>
+              {state.isLoading && (
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 20 }}
+                  className={styles.loadingWrapper}
+                  style={{
+                    position: 'absolute',
+                    bottom: 20,
+                    left: '50%',
+                    transform: 'translateX(-50%)'
+                  }}
+                >
+                  <LoadingIndicator type="typing" />
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </>
+        )}
+      </AutoSizer>
+    </div>
+  )
+})
+
+VirtualMessageList.displayName = 'VirtualMessageList'
+
+export default VirtualMessageList
+```
+
+### 3. مكونات الأيقونات المخصصة مع Fallback
+
+#### `app/chat/components/icons/CustomIcons.tsx`
+
+```tsx
+'use client'
+
+import React from 'react'
+import { 
+  MessageOutlined, 
+  RobotOutlined, 
+  SearchOutlined,
+  FileTextOutlined 
+} from '@ant-design/icons'
+
+// نوع الأيقونة
+interface IconProps {
+  size?: number
+  color?: string
+  className?: string
+  style?: React.CSSProperties
+}
+
+// مكون أيقونة عام مع fallback
+const IconWrapper: React.FC<{
+  children: React.ReactNode
+  fallback: React.ReactNode
+}> = ({ children, fallback }) => {
+  const [hasError, setHasError] = React.useState(false)
+  
+  if (hasError) return <>{fallback}</>
+  
+  return (
+    <span onError={() => setHasError(true)}>
+      {children}
+    </span>
+  )
+}
+
+// أيقونة البحث في الملفات
+export const FileSearchIcon: React.FC<IconProps> = ({ 
+  size = 24, 
+  color = 'currentColor',
+  className,
+  style 
+}) => (
+  <IconWrapper fallback={<SearchOutlined style={{ fontSize: size, color, ...style }} />}>
+    <svg 
+      width={size} 
+      height={size} 
+      viewBox="0 0 24 24" 
+      fill="none"
+      className={className}
+      style={style}
+    >
+      <path 
+        d="M14 2H6C4.9 2 4 2.9 4 4V20C4 21.1 4.9 22 6 22H18C19.1 22 20 21.1 20 20V8L14 2Z" 
+        stroke={color} 
+        strokeWidth="2" 
+        strokeLinecap="round" 
+        strokeLinejoin="round"
+      />
+      <path 
+        d="M14 2V8H20" 
+        stroke={color} 
+        strokeWidth="2" 
+        strokeLinecap="round" 
+        strokeLinejoin="round"
+      />
+      <circle 
+        cx="11.5" 
+        cy="14.5" 
+        r="2.5" 
+        stroke={color} 
+        strokeWidth="2"
+      />
+      <path 
+        d="M13.5 16.5L16 19" 
+        stroke={color} 
+        strokeWidth="2" 
+        strokeLinecap="round"
+      />
+    </svg>
+  </IconWrapper>
+)
+
+// أيقونة الذكاء الاصطناعي
+export const AiBrainIcon: React.FC<IconProps> = ({ 
+  size = 24, 
+  color = 'currentColor',
+  className,
+  style 
+}) => (
+  <IconWrapper fallback={<RobotOutlined style={{ fontSize: size, color, ...style }} />}>
+    <svg 
+      width={size} 
+      height={size} 
+      viewBox="0 0 24 24" 
+      fill="none"
+      className={className}
+      style={style}
+    >
+      <path 
+        d="M12 2C9.5 2 7.5 4 7.5 6.5C7.5 7.5 8 8.5 8.5 9.5C7 10.5 6 12 6 14C6 15 6.5 16 7 16.5C6.5 17 6 18 6 19C6 21 7.5 22 9.5 22C10.5 22 11.5 21.5 12 21C12.5 21.5 13.5 22 14.5 22C16.5 22 18 21 18 19C18 18 17.5 17 17 16.5C17.5 16 18 15 18 14C18 12 17 10.5 15.5 9.5C16 8.5 16.5 7.5 16.5 6.5C16.5 4 14.5 2 12 2Z" 
+        stroke={color} 
+        strokeWidth="2" 
+        strokeLinecap="round" 
+        strokeLinejoin="round"
+      />
+      <circle cx="9" cy="10" r="1" fill={color} />
+      <circle cx="15" cy="10" r="1" fill={color} />
+      <path 
+        d="M9 14C9 15.5 10.5 17 12 17C13.5 17 15 15.5 15 14" 
+        stroke={color} 
+        strokeWidth="2" 
+        strokeLinecap="round"
+      />
+    </svg>
+  </IconWrapper>
+)
+
+// أيقونة الدردشة
+export const ChatBotIcon: React.FC<IconProps> = ({ 
+  size = 24, 
+  color = 'currentColor',
+  className,
+  style 
+}) => (
+  <IconWrapper fallback={<MessageOutlined style={{ fontSize: size, color, ...style }} />}>
+    <svg 
+      width={size} 
+      height={size} 
+      viewBox="0 0 24 24" 
+      fill="none"
+      className={className}
+      style={style}
+    >
+      <rect 
+        x="3" 
+        y="4" 
+        width="18" 
+        height="12" 
+        rx="2" 
+        stroke={color} 
+        strokeWidth="2"
+      />
+      <path 
+        d="M8 16L10 19L12 16" 
+        stroke={color} 
+        strokeWidth="2" 
+        strokeLinecap="round" 
+        strokeLinejoin="round"
+      />
+      <circle cx="8" cy="10" r="1" fill={color} />
+      <circle cx="16" cy="10" r="1" fill={color} />
+      <path 
+        d="M8 12H16" 
+        stroke={color} 
+        strokeWidth="2" 
+        strokeLinecap="round"
+      />
+    </svg>
+  </IconWrapper>
+)
+
+// Hook لعكس الأيقونات في RTL
+export function useRTLIcon<T extends IconProps>(
+  Icon: React.FC<T>
+): React.FC<T> {
+  return React.useMemo(() => {
+    const RTLIcon: React.FC<T> = (props) => {
+      const isRTL = document.dir === 'rtl'
+      
+      return (
+        <span 
+          style={{ 
+            display: 'inline-block',
+            transform: isRTL ? 'scaleX(-1)' : 'none',
+            transition: 'transform 0.3s ease'
+          }}
+        >
+          <Icon {...props} />
+        </span>
+      )
+    }
+    
+    return RTLIcon
+  }, [Icon])
+}
+```
+
+### 4. مؤشرات التحميل المتقدمة
+
+#### `app/chat/components/LoadingIndicator.tsx`
+
+```tsx
+'use client'
+
+import React from 'react'
+import { Progress, Spin } from 'antd'
+import { LoadingOutlined } from '@ant-design/icons'
+import { motion } from 'framer-motion'
+import styles from './LoadingIndicator.module.css'
+
+interface LoadingIndicatorProps {
+  type?: 'typing' | 'spinner' | 'progress' | 'skeleton'
+  progress?: number
+  message?: string
+  size?: 'small' | 'default' | 'large'
+}
+
+const LoadingIndicator: React.FC<LoadingIndicatorProps> = ({
+  type = 'spinner',
+  progress = 0,
+  message,
+  size = 'default'
+}) => {
+  switch (type) {
+    case 'typing':
+      return (
+        <div className={styles.typingIndicator}>
+          <motion.span
+            animate={{ opacity: [0, 1, 0] }}
+            transition={{ duration: 1.5, repeat: Infinity, delay: 0 }}
+            className={styles.dot}
+          />
+          <motion.span
+            animate={{ opacity: [0, 1, 0] }}
+            transition={{ duration: 1.5, repeat: Infinity, delay: 0.2 }}
+            className={styles.dot}
+          />
+          <motion.span
+            animate={{ opacity: [0, 1, 0] }}
+            transition={{ duration: 1.5, repeat: Infinity, delay: 0.4 }}
+            className={styles.dot}
+          />
+        </div>
+      )
+      
+    case 'progress':
+      return (
+        <div className={styles.progressWrapper}>
+          <Progress
+            percent={progress}
+            strokeColor={{
+              '0%': 'var(--color-1)',
+              '100%': 'var(--color-2)'
+            }}
+            size={size}
+            status={progress === 100 ? 'success' : 'active'}
+          />
+          {message && (
+            <span className={styles.progressMessage}>{message}</span>
+          )}
+        </div>
+      )
+      
+    case 'skeleton':
+      return (
+        <div className={styles.skeletonWrapper}>
+          <motion.div
+            animate={{ opacity: [0.5, 1, 0.5] }}
+            transition={{ duration: 2, repeat: Infinity }}
+            className={styles.skeletonLine}
+          />
+          <motion.div
+            animate={{ opacity: [0.5, 1, 0.5] }}
+            transition={{ duration: 2, repeat: Infinity, delay: 0.2 }}
+            className={`${styles.skeletonLine} ${styles.short}`}
+          />
+        </div>
+      )
+      
+    default:
+      return (
+        <div className={styles.spinnerWrapper}>
+          <Spin
+            indicator={<LoadingOutlined spin />}
+            size={size}
+          />
+          {message && (
+            <span className={styles.spinnerMessage}>{message}</span>
+          )}
+        </div>
+      )
+  }
+}
+
+export default React.memo(LoadingIndicator)
+```
+
+### 5. Composer المحسّن مع Quick Actions
+
+#### `app/chat/components/EnhancedComposer.tsx`
+
+```tsx
+'use client'
+
+import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react'
+import { 
+  Input, 
+  Button, 
+  Upload, 
+  Tooltip, 
+  Space,
+  Dropdown,
+  Tag,
+  message,
+  Progress 
+} from 'antd'
+import {
+  SendOutlined,
+  PaperClipOutlined,
+  ThunderboltOutlined,
+  AudioOutlined,
+  StopOutlined,
+  CloseOutlined
+} from '@ant-design/icons'
+import { motion, AnimatePresence } from 'framer-motion'
+import { useChatContext } from '../context/ChatContext'
+import { useRTLIcon, AiBrainIcon } from './icons/CustomIcons'
+import type { MenuProps } from 'antd'
+import styles from './EnhancedComposer.module.css'
+
+const { TextArea } = Input
+
+interface EnhancedComposerProps {
+  sessionId: string
+  placeholder?: string
+  maxFileSize?: number // in MB
+  allowedFileTypes?: string[]
+}
+
+const EnhancedComposer = React.memo<EnhancedComposerProps>(({
+  sessionId,
+  placeholder,
+  maxFileSize = 10,
+  allowedFileTypes = ['image/*', 'application/pdf', '.doc,.docx,.txt']
+}) => {
+  const { state, actions } = useChatContext()
+  const [text, setText] = useState('')
+  const [files, setFiles] = useState<File[]>([])
+  const [isRecording, setIsRecording] = useState(false)
+  const [isFocused, setIsFocused] = useState(false)
+  const textAreaRef = useRef<any>(null)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  
+  // أيقونة الإرسال مع دعم RTL
+  const RTLSendIcon = useRTLIcon(SendOutlined as any)
+
+  // معالج الإرسال المحسّن
+  const handleSend = useCallback(async () => {
+    if (!text.trim() && files.length === 0) return
+
+    const content: MessageContent = {
+      text: text.trim(),
+      files: files.map(f => ({
+        id: Date.now().toString(),
+        name: f.name,
+        type: f.type,
+        size: f.size
+      }))
+    }
+
+    await actions.sendMessage(sessionId, content)
+    setText('')
+    setFiles([])
+    textAreaRef.current?.focus()
+  }, [text, files, sessionId, actions])
+
+  // اختصارات لوحة المفاتيح للـ Quick Actions
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!e.ctrlKey || !e.shiftKey) return
+      
+      const quickAction = state.quickActions.find(
+        action => action.shortcut === `Ctrl+Shift+${e.key.toUpperCase()}`
+      )
+      
+      if (quickAction) {
+        e.preventDefault()
+        setText(quickAction.template)
+        textAreaRef.current?.focus()
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [state.quickActions])
+
+  // معالج التسجيل الصوتي
+  const handleVoiceRecording = useCallback(async () => {
+    if (isRecording) {
+      mediaRecorderRef.current?.stop()
+      setIsRecording(false)
+      return
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const mediaRecorder = new MediaRecorder(stream)
+      const chunks: BlobPart[] = []
+
+      mediaRecorder.ondataavailable = (e) => chunks.push(e.data)
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(chunks, { type: 'audio/webm' })
+        const file = new File([blob], `recording_${Date.now()}.webm`, { type: 'audio/webm' })
+        setFiles(prev => [...prev, file])
+        stream.getTracks().forEach(track => track.stop())
+      }
+
+      mediaRecorderRef.current = mediaRecorder
+      mediaRecorder.start()
+      setIsRecording(true)
+    } catch (error) {
+      message.error('لا يمكن الوصول إلى الميكروفون')
+    }
+  }, [isRecording])
+
+  // قائمة Quick Actions المحسّنة
+  const quickActionsMenu = useMemo<MenuProps['items']>(() => 
+    state.quickActions.map(action => ({
+      key: action.id,
+      icon: action.icon,
+      label: (
+        <div className={styles.quickActionItem}>
+          <span>{action.label}</span>
+          {action.shortcut && (
+            <Tag size="small" className={styles.shortcutTag}>
+              {action.shortcut}
+            </Tag>
+          )}
+        </div>
+      ),
+      onClick: () => {
+        setText(prev => prev + action.template)
+        textAreaRef.current?.focus()
+      }
+    })),
+    [state.quickActions]
+  )
+
+  // معالج رفع الملفات مع التحقق
+  const uploadProps = useMemo(() => ({
+    beforeUpload: (file: File) => {
+      // التحقق من حجم الملف
+      if (file.size > maxFileSize * 1024 * 1024) {
+        message.error(`حجم الملف يجب أن يكون أقل من ${maxFileSize}MB`)
+        return false
+      }
+      
+      setFiles(prev => [...prev, file])
+      message.success(`تم إضافة ${file.name}`)
+      return false
+    },
+    showUploadList: false,
+    accept: allowedFileTypes.join(',')
+  }), [maxFileSize, allowedFileTypes])
+
+  // معالج مفاتيح الإدخال
+  const handleKeyPress = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      handleSend()
+    }
+  }, [handleSend])
+
+  return (
+    <motion.div
+      className={styles.composer}
+      animate={{ 
+        borderColor: isFocused ? 'var(--color-1)' : 'var(--chat-composer-border)',
+        boxShadow: isFocused ? 'var(--shadow-md)' : 'var(--shadow-sm)'
+      }}
+      transition={{ duration: 0.2 }}
+    >
+      {/* عرض الملفات المرفقة مع Progress */}
+      <AnimatePresence>
+        {files.length > 0 && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className={styles.attachedFiles}
+          >
+            {files.map((file, idx) => {
+              const uploadProgress = state.uploadProgress.get(file.name) || 0
+              
+              return (
+                <motion.div
+                  key={idx}
+                  layout
+                  initial={{ scale: 0.8, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  exit={{ scale: 0.8, opacity: 0 }}
+                  className={styles.attachedFile}
+                >
+                  <div className={styles.fileInfo}>
+                    <span className={styles.fileName}>{file.name}</span>
+                    {uploadProgress > 0 && uploadProgress < 100 && (
+                      <Progress 
+                        percent={uploadProgress} 
+                        size="small" 
+                        strokeWidth={2}
+                      />
+                    )}
+                  </div>
+                  
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<CloseOutlined />}
+                    onClick={() => setFiles(files.filter((_, i) => i !== idx))}
+                  />
+                </motion.div>
+              )
+            })}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* عرض حالة الخطأ */}
+      <AnimatePresence>
+        {state.error && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className={styles.errorMessage}
+          >
+            <span>{state.error.message}</span>
+            {state.error.retry && (
+              <Button 
+                size="small" 
+                type="link" 
+                onClick={state.error.retry}
+              >
+                إعادة المحاولة
+              </Button>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* منطقة الإدخال الرئيسية */}
+      <div className={styles.inputArea}>
+        <div className={styles.textAreaWrapper}>
+          <TextArea
+            ref={textAreaRef}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onFocus={() => setIsFocused(true)}
+            onBlur={() => setIsFocused(false)}
+            onKeyPress={handleKeyPress}
+            placeholder={placeholder || (
+              state.direction === 'rtl' ? 
+                'اكتب رسالتك هنا... (Shift+Enter لسطر جديد)' : 
+                'Type your message... (Shift+Enter for new line)'
+            )}
+            autoSize={{ minRows: 1, maxRows: 6 }}
+            disabled={state.isLoading}
+            className={styles.textInput}
+            aria-label="Message input"
+          />
+
+          {/* عداد الأحرف */}
+          <div className={styles.charCount}>
+            {text.length} / 4000
+          </div>
+        </div>
+
+        {/* أزرار الإجراءات */}
+        <div className={styles.actions}>
+          <Space size="small">
+            {/* رفع الملفات */}
+            <Tooltip title="إرفاق ملف">
+              <Upload {...uploadProps}>
+                <Button
+                  type="text"
+                  icon={<PaperClipOutlined />}
+                  disabled={state.isLoading}
+                  className={styles.actionBtn}
+                  aria-label="Attach file"
+                />
+              </Upload>
+            </Tooltip>
+
+            {/* Quick Actions */}
+            <Dropdown 
+              menu={{ items: quickActionsMenu }} 
+              placement="topLeft"
+              trigger={['click']}
+            >
+              <Tooltip title="إجراءات سريعة">
+                <Button
+                  type="text"
+                  icon={<AiBrainIcon size={16} />}
+                  disabled={state.isLoading}
+                  className={styles.actionBtn}
+                  aria-label="Quick actions"
+                />
+              </Tooltip>
+            </Dropdown>
+
+            {/* تسجيل صوتي */}
+            <Tooltip title={isRecording ? 'إيقاف التسجيل' : 'تسجيل صوتي'}>
+              <Button
+                type="text"
+                icon={isRecording ? <StopOutlined /> : <AudioOutlined />}
+                danger={isRecording}
+                onClick={handleVoiceRecording}
+                disabled={state.isLoading}
+                className={`${styles.actionBtn} ${isRecording ? styles.recording : ''}`}
+                aria-label={isRecording ? 'Stop recording' : 'Start recording'}
+              />
+            </Tooltip>
+          </Space>
+        </div>
+      </div>
+
+      {/* زر الإرسال */}
+      <motion.div
+        whileHover={{ scale: 1.05 }}
+        whileTap={{ scale: 0.95 }}
+      >
+        <Button
+          type="primary"
+          icon={<RTLSendIcon />}
+          onClick={handleSend}
+          disabled={state.isLoading || (!text.trim() && files.length === 0)}
+          loading={state.isLoading}
+          className={styles.sendBtn}
+          aria-label="Send message"
+        >
+          {state.isLoading ? 'جاري الإرسال...' : 'إرسال'}
+        </Button>
+      </motion.div>
+    </motion.div>
+  )
+})
+
+EnhancedComposer.displayName = 'EnhancedComposer'
+
+export default EnhancedComposer
+```
+
+### 6. CSS Modules المحسّنة
+
+#### `app/chat/styles/enhanced.module.css`
+
+```css
+/* مؤشرات التحميل */
+.typingIndicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  background: var(--chat-bg-ai);
+  border-radius: var(--radius-lg);
+  width: fit-content;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-5);
+}
+
+.progressWrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  background: var(--background-gray-light);
+  border-radius: var(--radius-md);
+}
+
+.progressMessage {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+}
+
+.skeletonWrapper {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.skeletonLine {
+  height: 16px;
+  background: linear-gradient(
+    90deg,
+    var(--background-gray-medium) 0%,
+    var(--background-gray-light) 50%,
+    var(--background-gray-medium) 100%
+  );
+  border-radius: var(--radius-sm);
+  width: 100%;
+}
+
+.skeletonLine.short {
+  width: 60%;
+}
+
+/* Composer محسّن */
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  background: var(--chat-composer-bg);
+  border: 2px solid var(--chat-composer-border);
+  border-radius: var(--radius-lg);
+  transition: all var(--transition-normal);
+}
+
+.attachedFiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  overflow: hidden;
+}
+
+.attachedFile {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--background-gray-light);
+  border: 1px solid var(--chat-border);
+  border-radius: var(--radius-md);
+  max-width: 200px;
+}
+
+.fileInfo {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fileName {
+  font-size: 0.875rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.errorMessage {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: rgba(var(--color-4-rgb), 0.1);
+  color: var(--color-4);
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+}
+
+.inputArea {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  flex: 1;
+}
+
+.textAreaWrapper {
+  flex: 1;
+  position: relative;
+}
+
+.textInput {
+  width: 100%;
+  resize: none;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: 1rem;
+  line-height: 1.5;
+  padding-inline-end: 60px;
+}
+
+.charCount {
+  position: absolute;
+  bottom: 8px;
+  inset-inline-end: 8px;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  pointer-events: none;
+  transition: color var(--transition-fast);
+}
+
+.textInput:focus ~ .charCount {
+  color: var(--color-1);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  padding-block: 4px;
+}
+
+.actionBtn {
+  color: var(--text-secondary);
+  transition: all var(--transition-fast);
+  border-radius: var(--radius-sm);
+}
+
+.actionBtn:hover {
+  color: var(--color-1);
+  background: rgba(var(--color-1-rgb), 0.1);
+}
+
+.actionBtn.recording {
+  color: var(--color-4);
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0% { opacity: 1; }
+  50% { opacity: 0.6; }
+  100% { opacity: 1; }
+}
+
+.quickActionItem {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  min-width: 160px;
+}
+
+.shortcutTag {
+  font-size: 0.75rem;
+  background: var(--background-gray-light);
+  border: 1px solid var(--chat-border);
+}
+
+.sendBtn {
+  min-width: 100px;
+  height: 38px;
+  font-weight: 500;
+  transition: all var(--transition-normal);
+}
+
+/* دعم RTL محسّن */
+[dir="rtl"] {
+  .sendBtn {
+    flex-direction: row-reverse;
+  }
+  
+  .actions {
+    flex-direction: row-reverse;
+  }
+  
+  .attachedFile {
+    flex-direction: row-reverse;
+  }
+  
+  .quickActionItem {
+    flex-direction: row-reverse;
+  }
+}
+
+/* Virtual Scrolling */
+.virtualList {
+  scrollbar-width: thin;
+  scrollbar-color: var(--text-muted) transparent;
+}
+
+.virtualList::-webkit-scrollbar {
+  width: 8px;
+}
+
+.virtualList::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.virtualList::-webkit-scrollbar-thumb {
+  background: var(--text-muted);
+  border-radius: 4px;
+  opacity: 0.3;
+}
+
+.virtualList::-webkit-scrollbar-thumb:hover {
+  opacity: 0.5;
+}
+
+/* حالة التحميل */
+.loadingWrapper {
+  z-index: 10;
+  pointer-events: none;
+}
+
+/* Accessibility */
+.screenReaderOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* انتقالات سلسة للثيم */
+* {
+  transition: 
+    background-color var(--transition-normal),
+    border-color var(--transition-normal),
+    color var(--transition-normal);
+}
+```
+
+### 7. دمج في صفحة Next.js
+
+#### `app/chat/page.tsx`
+
+```tsx
+'use client'
+
+import React, { Suspense } from 'react'
+import dynamic from 'next/dynamic'
+import { ConfigProvider, Spin } from 'antd'
+import arEG from 'antd/locale/ar_EG'
+import enUS from 'antd/locale/en_US'
+import { ChatProvider, useChatContext } from './context/ChatContext'
+import './styles/chat.variables.css'
+import './styles/enhanced.module.css'
+
+// Lazy loading للمكونات الثقيلة
+const ChatLayout = dynamic(() => import('./components/ChatLayout'), {
+  loading: () => <LoadingScreen />,
+  ssr: false
+})
+
+function LoadingScreen() {
+  return (
+    <div className="loading-screen">
+      <Spin size="large" tip="جاري التحميل..." />
+    </div>
+  )
+}
+
+function ChatApp() {
+  const { state } = useChatContext()
+  const locale = state.direction === 'rtl' ? arEG : enUS
+
+  return (
+    <ConfigProvider
+      locale={locale}
+      direction={state.direction}
+      theme={{
+        token: {
+          colorPrimary: 'var(--color-1)',
+          borderRadius: 8,
+          fontFamily: state.direction === 'rtl' ? 
+            '"Noto Sans Arabic", "Segoe UI", Tahoma, sans-serif' :
+            '"Segoe UI", Tahoma, Geneva, sans-serif'
+        }
+      }}
+    >
+      <Suspense fallback={<LoadingScreen />}>
+        <ChatLayout />
+      </Suspense>
+    </ConfigProvider>
+  )
+}
+
+export default function ChatPage() {
+  return (
+    <ChatProvider>
+      <ChatApp />
+    </ChatProvider>
+  )
+}
+```
+
+### 8. خطوات الاختبار والتثبيت
+
+#### تثبيت الحزم المطلوبة:
+
+```bash
+# الحزم الأساسية
+npm install antd framer-motion react-markdown react-window react-virtualized-auto-sizer
+
+# حزم إضافية للمميزات المتقدمة
+npm install react-syntax-highlighter @types/react-syntax-highlighter
+npm install dayjs classnames ahooks
+
+# حزم التطوير
+npm install --save-dev @testing-library/react @testing-library/jest-dom
+```
+
+#### خطوات الاختبار اليدوي:
+
+##### 1. اختبار RTL:
+```javascript
+// فتح Console وتنفيذ:
+document.dir = 'rtl'
+// التحقق من:
+// - محاذاة جميع العناصر
+// - اتجاه الأيقونات (خاصة زر الإرسال)
+// - اتجاه الانيميشن
+// - عمل Quick Actions
+```
+
+##### 2. اختبار الوضع الداكن:
+```javascript
+// فتح Console وتنفيذ:
+document.documentElement.setAttribute('data-theme', 'dark')
+// التحقق من:
+// - وضوح النصوص
+// - التباين المناسب
+// - عمل الانتقالات
+```
+
+##### 3. اختبار الأداء:
+```javascript
+// إرسال 100 رسالة تجريبية:
+for(let i = 0; i < 100; i++) {
+  // إرسال رسالة
+  // مراقبة الـ Performance tab في DevTools
+}
+```
+
+##### 4. اختبار رفع الملفات:
+- رفع ملف أكبر من 10MB (يجب أن يُرفض)
+- رفع أنواع ملفات مختلفة
+- رفع عدة ملفات معًا
+- مراقبة شريط التقدم
+
+##### 5. اختبار Quick Actions:
+- استخدام `Ctrl+Shift+S` للتلخيص
+- استخدام `Ctrl+Shift+T` للترجمة
+- استخدام `Ctrl+Shift+E` للشرح
+- استخدام `Ctrl+Shift+I` للتحسين
+
+### معايير القبول (DoD):
+
+✅ **RTL Support**
+- [ ] جميع العناصر محاذاة بشكل صحيح
+- [ ] الأيقونات التفاعلية تنعكس تلقائيًا
+- [ ] الانيميشن يعمل في الاتجاه الصحيح
+
+✅ **Performance**
+- [ ] Virtual scrolling يعمل مع 1000+ رسالة
+- [ ] لا يوجد re-renders غير ضرورية
+- [ ] Lazy loading للصور والمكونات الثقيلة
+
+✅ **Accessibility**
+- [ ] جميع الأزرار لديها ARIA labels
+- [ ] يمكن التنقل بالـ Keyboard
+- [ ] Screen reader متوافق
+
+✅ **Error Handling**
+- [ ] رسائل خطأ واضحة للمستخدم
+- [ ] Retry logic للعمليات الفاشلة
+- [ ] Fallback للأيقونات المخصصة
+
+✅ **User Experience**
+- [ ] مؤشرات تحميل واضحة
+- [ ] انتقالات سلسة
+- [ ] Quick Actions تعمل بالاختصارات
+- [ ] عداد أحرف وتقدم رفع الملفات
+
+### Changelog:
+
+```markdown
+## v2.0.0 - Performance & UX Update
+
+### Added
+- Virtual scrolling for messages (react-window)
+- Custom icons with RTL auto-flip support  
+- Enhanced loading indicators (typing, progress, skeleton)
+- Quick AI Actions with keyboard shortcuts
+- Voice recording capability
+- File upload progress tracking
+- Character counter in composer
+- Error handling with retry logic
+- Accessibility improvements (ARIA labels)
+
+### Changed
+- Optimized re-renders with React.memo and useMemo
+- Improved Context with reducer pattern
+- Enhanced RTL support with automatic icon flipping
+- Better animation timing and easing functions
+- Upgraded composer with more features
+
+### Fixed
+- Memory leaks in event listeners
+- Unnecessary re-renders in message list
+- RTL animation direction issues
+- File upload size validation
+```
+
+هذه التحسينات توفر واجهة دردشة عالية الأداء مع تجربة مستخدم محسّنة ودعم كامل للمميزات المطلوبة.
