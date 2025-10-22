@@ -41,6 +41,7 @@ ArabicChatUI is a bilingual (Arabic/English) AI chat application with full RTL/L
 - **Start production server**: `npm start` - Runs the production build
 - **Type checking**: `npm run check` - Runs TypeScript compiler checks
 - **Database operations**: `npm run db:push` - Push database schema changes
+- **Test deployment**: `npm run test:deployment` - Tests production build and server startup
 
 ## Technology Stack
 
