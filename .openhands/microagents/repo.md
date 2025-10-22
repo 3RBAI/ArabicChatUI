@@ -24,6 +24,7 @@ ArabicChatUI is a bilingual (Arabic/English) AI chat application with full RTL/L
 │   └── vite.ts             # Vite middleware for development
 ├── shared/                 # Shared types and utilities
 ├── dist/                   # Production build output
+├── api/                   # Vercel serverless functions for deployment
 ├── attached_assets/        # File upload storage
 ├── design_guidelines.md    # UI/UX design specifications
 ├── replit.md              # Comprehensive system architecture documentation
@@ -31,6 +32,7 @@ ArabicChatUI is a bilingual (Arabic/English) AI chat application with full RTL/L
 ├── vite.config.ts         # Vite build configuration
 ├── tailwind.config.ts     # TailwindCSS configuration
 ├── drizzle.config.ts      # Database ORM configuration
+├── vercel.json            # Vercel deployment configuration
 └── components.json        # shadcn/ui component configuration
 ```
 
@@ -41,13 +43,15 @@ ArabicChatUI is a bilingual (Arabic/English) AI chat application with full RTL/L
 - **Start production server**: `npm start` - Runs the production build
 - **Type checking**: `npm run check` - Runs TypeScript compiler checks
 - **Database operations**: `npm run db:push` - Push database schema changes
-- **Test deployment**: `npm run test:deployment` - Tests production build and server startup
+- **Test deployment**: `npm run test:deployment` - Tests production build and server startup locally
 
 ## Technology Stack
 
 **Frontend**: React 18 + TypeScript, Vite, TailwindCSS, Radix UI, shadcn/ui, TanStack Query, Wouter routing
 
 **Backend**: Node.js + Express, TypeScript, Drizzle ORM, PostgreSQL (Neon), OpenAI SDK
+
+**Deployment**: Vercel with serverless functions, automatic builds from GitHub
 
 **Key Features**: Bilingual RTL/LTR support, dark/light themes, file uploads, chat session management, AI model integration
 
