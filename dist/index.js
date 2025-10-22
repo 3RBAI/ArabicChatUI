@@ -407,7 +407,34 @@ var vite_config_default = defineConfig({
   root: path.resolve(__dirname, "client"),
   build: {
     outDir: path.resolve(__dirname, "dist/public"),
-    emptyOutDir: true
+    emptyOutDir: true,
+    // Code splitting optimization
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // Split React and React DOM into separate chunk
+          "react-vendor": ["react", "react-dom"],
+          // Split Radix UI components
+          "ui-vendor": [
+            "@radix-ui/react-dialog",
+            "@radix-ui/react-dropdown-menu",
+            "@radix-ui/react-select",
+            "@radix-ui/react-tabs",
+            "@radix-ui/react-toast",
+            "@radix-ui/react-tooltip",
+            "@radix-ui/react-scroll-area"
+          ],
+          // Split markdown rendering
+          "markdown": ["react-markdown", "react-syntax-highlighter"],
+          // Split query client
+          "query": ["@tanstack/react-query"],
+          // Split icons
+          "icons": ["lucide-react", "react-icons"]
+        }
+      }
+    },
+    // Increase chunk size warning limit
+    chunkSizeWarningLimit: 600
   },
   server: {
     fs: {
