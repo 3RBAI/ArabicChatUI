@@ -4,9 +4,19 @@ import axios from 'axios';
 // Reference to javascript_openai blueprint integration
 // the newest OpenAI model is "gpt-5" which was released August 7, 2025. do not change this unless explicitly requested by the user
 
-const openai = new OpenAI({ 
-  apiKey: process.env.OPENAI_API_KEY 
-});
+let openai: OpenAI | null = null;
+
+function getOpenAI() {
+  if (!openai) {
+    if (!process.env.OPENAI_API_KEY) {
+      throw new Error('OpenAI API key is required. Please set OPENAI_API_KEY environment variable.');
+    }
+    openai = new OpenAI({ 
+      apiKey: process.env.OPENAI_API_KEY 
+    });
+  }
+  return openai;
+}
 
 interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
@@ -28,7 +38,8 @@ export async function sendToOpenAI(
   model: string = 'gpt-5'
 ): Promise<AIResponse> {
   try {
-    const response = await openai.chat.completions.create({
+    const client = getOpenAI();
+    const response = await client.chat.completions.create({
       model,
       messages,
       max_completion_tokens: 8192,
